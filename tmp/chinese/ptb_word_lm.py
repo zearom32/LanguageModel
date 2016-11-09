@@ -75,8 +75,8 @@ flags.DEFINE_string("save_path", None,
                     "Model output directory.")
 flags.DEFINE_bool("use_fp16", False,
                   "Train using 16-bit floats instead of 32bit floats")
-flags.DEFINE_bool("test", False,
-                  "Test")
+flags.DEFINE_bool("inference", False,
+                  "Inference")
 
 FLAGS = flags.FLAGS
 
@@ -135,6 +135,7 @@ class PTBModel(object):
         # inputs = [tf.squeeze(input_step, [1])
         #           for input_step in tf.split(1, num_steps, inputs)]
         # outputs, state = tf.nn.rnn(cell, inputs, initial_state=self._initial_state)
+
         outputs = []
         state = self._initial_state
         with tf.variable_scope("RNN"):
@@ -142,6 +143,9 @@ class PTBModel(object):
                 if time_step > 0: tf.get_variable_scope().reuse_variables()
                 (cell_output, state) = cell(inputs[:, time_step, :], state)
                 outputs.append(cell_output)
+
+        #inputs = [tf.squeeze(input_step, [1]) for input_step in tf.split(1, num_steps, inputs)]
+        #outputs, state = tf.nn.rnn(cell, inputs, initial_state=self._initial_state)
 
         output = tf.reshape(tf.concat(1, outputs), [-1, size])
         softmax_w = tf.get_variable(
@@ -292,7 +296,7 @@ def run_epoch(session, model, eval_op=None, verbose=False):
         costs += cost
         iters += model.input.num_steps
 
-        if verbose and step % (model.input.epoch_size // 10) == 10:
+        if verbose and step % (model.input.epoch_size // 100) == 100:
             print("%.3f perplexity: %.3f speed: %.0f wps" %
                   (step * 1.0 / model.input.epoch_size, np.exp(costs / iters),
                    iters * model.input.batch_size / (time.time() - start_time)))
@@ -359,7 +363,7 @@ def main(_):
                 train_perplexity = run_epoch(session, m, eval_op=m.train_op,
                                              verbose=True)
                 print("Epoch: %d Train Perplexity: %.3f" % (i + 1, train_perplexity))
-                valid_perplexity = run_epoch(session, mvalid)
+                valid_perplexity = run_epoch(session, mvalid, verbose=True)
                 print("Epoch: %d Valid Perplexity: %.3f" % (i + 1, valid_perplexity))
 
             test_perplexity = run_epoch(session, mtest)

@@ -22,6 +22,7 @@ from __future__ import print_function
 import collections
 import os
 import codecs
+import itertools
 
 import tensorflow as tf
 from ch import ch_word_to_id, ch_id_to_word,ch_list
@@ -92,3 +93,78 @@ def ptb_producer(raw_data, batch_size, num_steps, name=None):
         y = tf.slice(data, [0, i * num_steps + 1], [batch_size, num_steps])
         return x, y
 
+
+def shift(sos, eos, tokens):
+    return [sos] + tokens[:-1]
+
+
+def list_flatten(l):
+    return list(itertools.chain(*l))
+
+def ch_producer(raw_data, batch_size, num_steps, name=None):
+    '''
+    Make an iterator on PTB data for language model
+
+    INPUT:   <sos> the cat  sat  <eos> <eos>  ...
+    WRAPPED:  THE  CAT SAT <eos> <eos> <eos>
+    TARGET:   the  cat sat <eos> <eos> <eos>  ...
+    WEIGHT:    1    1   1    1     1     0   000
+
+    T:       -----------------------------
+    W:       ----------------------------- ----- ----- (W = T + 2)
+
+    Note: *weights* input is used in loss=seq2seq. It masks the padding
+          part of input.
+          len(weights) = len(inputs) + 2 is necessary
+          to train rnn stop at the ending.
+    '''
+
+    with tf.name_scope(name, "PTBProducer", [raw_data, batch_size, num_steps]):
+        data_len = len(raw_data)
+        eos = ch_word_to_id['<eos>']
+        sos = ch_word_to_id['<sos>']
+
+        i = 0
+
+        X = []
+        Y = []
+        W = []
+
+        while i < data_len:
+            t = 0
+            while i + t < data_len and raw_data[i + t] != eos \
+                    and t < num_steps:
+                t += 1
+            org = raw_data[i:i + t] + [eos] * (num_steps - t)
+            # w = t + 2
+            ww = [1.0] * min(t + 2, num_steps) + [0.0] * (num_steps - t - 2)
+
+            X.append(shift(sos, eos, org))
+            Y.append(org)
+            W.append(ww)
+
+            if i + t < data_len and raw_data[i + t] == eos:
+                t += 1
+            i += t
+
+
+        epoch_size = len(W) // batch_size  # the iterations in an epoch
+
+        if epoch_size == 0:
+            raise ValueError("epoch_size == 0 "
+                             "decrease batch_size or num_steps")
+
+        X = list_flatten(X)
+        Y = list_flatten(Y)
+        W = list_flatten(W)
+
+        batch_len = epoch_size * num_steps
+
+        X = tf.reshape(X[0:batch_len*batch_size], [batch_size, batch_len])
+        Y = tf.reshape(Y[0:batch_len*batch_size], [batch_size, batch_len])
+        W = tf.reshape(W[0:batch_len*batch_size], [batch_size, batch_len])
+        i = tf.train.range_input_producer(epoch_size, shuffle=False).dequeue()
+        x = tf.slice(X, [0, i * num_steps], [batch_size, num_steps])
+        y = tf.slice(Y, [0, i * num_steps], [batch_size, num_steps])
+        w = tf.slice(W, [0, i * num_steps], [batch_size, num_steps])
+        return x, y, w
