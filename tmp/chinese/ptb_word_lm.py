@@ -92,7 +92,7 @@ class PTBInput(object):
         self.batch_size = batch_size = config.batch_size
         self.num_steps = num_steps = config.num_steps
         self.epoch_size = ((len(data) // batch_size) - 1) // num_steps
-        self.input_data, self.targets = reader.ptb_producer(
+        self.input_data, self.targets, self.weights = reader.ch_producer(
             data, batch_size, num_steps, name=name)
 
 
@@ -155,7 +155,7 @@ class PTBModel(object):
         loss = tf.nn.seq2seq.sequence_loss_by_example(
             [logits],
             [tf.reshape(input_.targets, [-1])],
-            [tf.ones([batch_size * num_steps], dtype=data_type())])
+            [tf.reshape(input_.weights, [-1])])
         self._cost = cost = tf.reduce_sum(loss) / batch_size
         self._final_state = state
 
