@@ -57,7 +57,7 @@ from __future__ import division
 from __future__ import print_function
 
 import time
-
+import datetime
 import numpy as np
 import tensorflow as tf
 
@@ -75,7 +75,8 @@ flags.DEFINE_string("save_path", None,
                     "Model output directory.")
 flags.DEFINE_bool("use_fp16", False,
                   "Train using 16-bit floats instead of 32bit floats")
-flags.DEFINE_bool("test", False, "Test")
+flags.DEFINE_bool("test", False,
+                  "Test")
 
 FLAGS = flags.FLAGS
 
@@ -147,7 +148,6 @@ class PTBModel(object):
             "softmax_w", [size, vocab_size], dtype=data_type())
         softmax_b = tf.get_variable("softmax_b", [vocab_size], dtype=data_type())
         logits = tf.matmul(output, softmax_w) + softmax_b
-        self._logits = logits
         loss = tf.nn.seq2seq.sequence_loss_by_example(
             [logits],
             [tf.reshape(input_.targets, [-1])],
@@ -198,9 +198,6 @@ class PTBModel(object):
     def train_op(self):
         return self._train_op
 
-    @property
-    def logits(self):
-        return self._logits
 
 class SmallConfig(object):
     """Small config."""
@@ -215,7 +212,7 @@ class SmallConfig(object):
     keep_prob = 1.0
     lr_decay = 0.5
     batch_size = 20
-    vocab_size = 10000
+    vocab_size = 6800
 
 
 class MediumConfig(object):
@@ -231,7 +228,7 @@ class MediumConfig(object):
     keep_prob = 0.5
     lr_decay = 0.8
     batch_size = 20
-    vocab_size = 10000
+    vocab_size = 6800
 
 
 class LargeConfig(object):
@@ -247,7 +244,7 @@ class LargeConfig(object):
     keep_prob = 0.35
     lr_decay = 1 / 1.15
     batch_size = 20
-    vocab_size = 10000
+    vocab_size = 6800
 
 
 class TestConfig(object):
@@ -263,7 +260,7 @@ class TestConfig(object):
     keep_prob = 1.0
     lr_decay = 0.5
     batch_size = 20
-    vocab_size = 10000
+    vocab_size = 6800
 
 
 def run_epoch(session, model, eval_op=None, verbose=False):
@@ -288,7 +285,7 @@ def run_epoch(session, model, eval_op=None, verbose=False):
         # feed_dict[h] = state[i].h
         feed_dict[model.initial_state] = state
 
-        vals = session.run(fetches, feed_dict=feed_dict)
+        vals = session.run(fetches, feed_dict=None)
         cost = vals["cost"]
         state = vals["final_state"]
 
@@ -328,26 +325,6 @@ def main(_):
     eval_config.batch_size = 1
     eval_config.num_steps = 1
 
-
-    if FLAGS.test:
-        with tf.Graph().as_default():
-            initializer = tf.random_uniform_initializer(-config.init_scale,
-                                                        config.init_scale)
-
-
-            with tf.name_scope("Test"):
-                test_input = PTBInput(config=eval_config, data=test_data, name="TestInput")
-                with tf.variable_scope("Model", reuse=True, initializer=initializer):
-                    mtest = PTBModel(is_training=False, config=eval_config,
-                                     input_=test_input)
-
-            sv = tf.train.Supervisor(logdir=FLAGS.save_path)
-
-            with sv.managed_session() as session:
-                print([ u.name for u in tf.all_variables()])
-
-        return
-
     with tf.Graph().as_default():
         initializer = tf.random_uniform_initializer(-config.init_scale,
                                                     config.init_scale)
@@ -372,7 +349,7 @@ def main(_):
                                  input_=test_input)
 
         sv = tf.train.Supervisor(logdir=FLAGS.save_path)
-        print([u.name for u in tf.all_variables()])
+        print(datetime.datetime.now())
         with sv.managed_session() as session:
             for i in range(config.max_max_epoch):
                 lr_decay = config.lr_decay ** max(i + 1 - config.max_epoch, 0.0)
@@ -387,6 +364,7 @@ def main(_):
 
             test_perplexity = run_epoch(session, mtest)
             print("Test Perplexity: %.3f" % test_perplexity)
+            print(datetime.datetime.now())
 
             if FLAGS.save_path:
                 print("Saving model to %s." % FLAGS.save_path)

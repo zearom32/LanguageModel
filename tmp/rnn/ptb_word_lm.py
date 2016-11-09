@@ -109,7 +109,7 @@ class PTBModel(object):
     # initialized to 1 but the hyperparameters of the model would need to be
     # different than reported in the paper.
     #lstm_cell = tf.nn.rnn_cell.BasicLSTMCell(size, forget_bias=0.0, state_is_tuple=True)
-    rnn_cell = tf.nn.rnn_cell.BasicRNNCell(size)
+    rnn_cell = tf.nn.rnn_cell.GRUCell(size)
     if is_training and config.keep_prob < 1:
       rnn_cell = tf.nn.rnn_cell.DropoutWrapper(
           rnn_cell, output_keep_prob=config.keep_prob)
@@ -203,9 +203,9 @@ class SmallConfig(object):
   init_scale = 0.1
   learning_rate = 1.0
   max_grad_norm = 5
-  num_layers = 2
+  num_layers = 1
   num_steps = 20
-  hidden_size = 200
+  hidden_size = 100
   max_epoch = 4
   max_max_epoch = 13
   keep_prob = 1.0
@@ -278,11 +278,9 @@ def run_epoch(session, model, eval_op=None, verbose=False):
 
   for step in range(model.input.epoch_size):
     feed_dict = {}
-    for i, (c, h) in enumerate(model.initial_state):
-      feed_dict[c] = state[i].c
-      feed_dict[h] = state[i].h
+    feed_dict[model.initial_state] = state
 
-    vals = session.run(fetches, feed_dict)
+    vals = session.run(fetches, feed_dict = None)
     cost = vals["cost"]
     state = vals["final_state"]
 
