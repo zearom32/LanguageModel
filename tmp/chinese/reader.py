@@ -24,13 +24,14 @@ import os
 import codecs
 import itertools
 import random
+import numpy as np
 
 import tensorflow as tf
 from ch import ch_word_to_id, ch_id_to_word,ch_list
 
 def _read_words(filename):
     with codecs.open(filename, "r") as f:
-        return f.read().decode("utf-8").replace("\n", "<eos>").split()
+        return f.read().decode("utf-8").replace("\n", " <eos> ").split()
 
 def get_id(word, word_to_id):
     if word in word_to_id:
@@ -43,10 +44,14 @@ def _file_to_word_ids(filename, word_to_id):
     return [get_id(word, word_to_id) for word in data]
 
 
-def inference_raw_data(data_path=None):
-    raw_data_path = os.path.join(data_path, "inference.txt")
+def inference_raw_data(data_path=None, filename="inference.txt"):
+    raw_data_path = os.path.join(data_path, filename)
     raw_data = _file_to_word_ids(raw_data_path, ch_word_to_id)
     return raw_data
+
+def line_to_data(line):
+    tmp = line.decode("utf-8").replace("\n", " <eos> ").split()
+    return [get_id(word, ch_word_to_id) for word in tmp]
 
 def ch_raw_data(data_path=None):
     train_path = os.path.join(data_path, "ch.train.txt")
@@ -120,20 +125,14 @@ def ch_producer(raw_data, batch_size, num_steps, name=None):
             raise ValueError("epoch_size == 0 "
                              "decrease batch_size or num_steps")
 
-        X = list_flatten(X)
-        Y = list_flatten(Y)
-        W = list_flatten(W)
+        def iterator():
+            for j in range(epoch_size):
+                x = np.array(X[j*batch_size:(j+1)*batch_size])
+                y = np.array(Y[j*batch_size:(j+1)*batch_size])
+                w = np.array(W[j*batch_size:(j+1)*batch_size])
+                yield (x, y, w)
 
-        batch_len = epoch_size * num_steps
-
-        X = tf.reshape(X[0:batch_len*batch_size], [batch_size, batch_len])
-        Y = tf.reshape(Y[0:batch_len*batch_size], [batch_size, batch_len])
-        W = tf.reshape(W[0:batch_len*batch_size], [batch_size, batch_len])
-        i = tf.train.range_input_producer(epoch_size, shuffle=False).dequeue()
-        x = tf.slice(X, [0, i * num_steps], [batch_size, num_steps])
-        y = tf.slice(Y, [0, i * num_steps], [batch_size, num_steps])
-        w = tf.slice(W, [0, i * num_steps], [batch_size, num_steps])
-        return x, y, w, epoch_size
+        return iterator(), epoch_size
 
 
 def generate_random(filename, line):

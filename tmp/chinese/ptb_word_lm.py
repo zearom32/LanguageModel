@@ -62,6 +62,8 @@ import numpy as np
 import tensorflow as tf
 
 import reader
+import codecs
+import os
 
 flags = tf.flags
 logging = tf.logging
@@ -91,20 +93,23 @@ class PTBInput(object):
     def __init__(self, config, data, name=None):
         self.batch_size = batch_size = config.batch_size
         self.num_steps = num_steps = config.num_steps
-        self.input_data, self.targets, self.weights, self.epoch_size = reader.ch_producer(
-            data, batch_size, num_steps, name=name)
+        self.iter_data, self.epoch_size = reader.ch_producer(data, batch_size, num_steps, name=name)
 
 
 class PTBModel(object):
     """The PTB model."""
 
-    def __init__(self, is_training, config, input_):
-        self._input = input_
+    def __init__(self, is_training, config):
 
-        batch_size = input_.batch_size
-        num_steps = input_.num_steps
+        batch_size = config.batch_size
+        num_steps = config.num_steps
         size = config.hidden_size
         vocab_size = config.vocab_size
+
+        shape = (batch_size, num_steps)
+        self.ch_inputs = tf.placeholder_with_default(tf.zeros(shape=shape, dtype=tf.int32), (batch_size, num_steps), "ch_inputs")
+        self.ch_targets = tf.placeholder_with_default(tf.zeros(shape=shape, dtype=tf.int32), (batch_size, num_steps), "ch_targets")
+        self.ch_weights = tf.placeholder_with_default(tf.zeros(shape=shape, dtype=data_type()), (batch_size, num_steps), "ch_weights")
 
         # Slightly better results can be obtained with forget gate biases
         # initialized to 1 but the hyperparameters of the model would need to be
@@ -120,7 +125,7 @@ class PTBModel(object):
         with tf.device("/cpu:0"):
             embedding = tf.get_variable(
                 "embedding", [vocab_size, size], dtype=data_type())
-            inputs = tf.nn.embedding_lookup(embedding, input_.input_data)
+            inputs = tf.nn.embedding_lookup(embedding, self.ch_inputs)
 
         if is_training and config.keep_prob < 1:
             inputs = tf.nn.dropout(inputs, config.keep_prob)
@@ -151,8 +156,8 @@ class PTBModel(object):
             "softmax_w", [size, vocab_size], dtype=data_type())
         softmax_b = tf.get_variable("softmax_b", [vocab_size], dtype=data_type())
         logits = tf.matmul(output, softmax_w) + softmax_b
-        weights = tf.reshape(input_.weights, [-1])
-        targets = tf.reshape(input_.targets, [-1])
+        weights = tf.reshape(self.ch_weights, [-1])
+        targets = tf.reshape(self.ch_targets, [-1])
         loss = tf.nn.seq2seq.sequence_loss_by_example(
             [logits],
             [targets],
@@ -181,14 +186,6 @@ class PTBModel(object):
 
     def assign_lr(self, session, lr_value):
         session.run(self._lr_update, feed_dict={self._new_lr: lr_value})
-
-    @property
-    def input(self):
-        return self._input
-
-    @input.setter
-    def input(self, ii):
-        self._input = ii
 
     @property
     def initial_state(self):
@@ -278,7 +275,7 @@ class TestConfig(object):
     vocab_size = 6800
 
 
-def run_epoch(session, model, eval_op=None, verbose=False):
+def run_epoch(session, model, input, eval_op=None, verbose=False, sv = None):
     """Runs the model on the given data."""
     start_time = time.time()
     costs = 0.0
@@ -292,25 +289,30 @@ def run_epoch(session, model, eval_op=None, verbose=False):
     if eval_op is not None:
         fetches["eval_op"] = eval_op
 
-    for step in range(model.input.epoch_size):
+    for step in range(input.epoch_size):
         feed_dict = {}
         # for i, (c, h) in enumerate(model.initial_state):
         # pass
         # feed_dict[c] = state[i].c
         # feed_dict[h] = state[i].h
-        feed_dict[model.initial_state] = state
+        inputs, targets, weights = next(input.iter_data)
+        feed_dict[model.ch_inputs] = inputs
+        feed_dict[model.ch_targets] = targets
+        feed_dict[model.ch_weights] = weights
 
-        vals = session.run(fetches, feed_dict=None)
+        vals = session.run(fetches, feed_dict=feed_dict)
         cost = vals["cost"]
         state = vals["final_state"]
 
         costs += cost
-        iters += model.input.num_steps
+        iters += input.num_steps
 
-        if verbose and step % (model.input.epoch_size // 100) == 100:
+        if verbose and step % (input.epoch_size // 100) == 100:
             print("%.3f perplexity: %.3f speed: %.0f wps" %
-                  (step * 1.0 / model.input.epoch_size, np.exp(costs / iters),
-                   iters * model.input.batch_size / (time.time() - start_time)))
+                  (step * 1.0 / input.epoch_size, np.exp(costs / iters),
+                   iters * input.batch_size / (time.time() - start_time)))
+            if sv and FLAGS.save_path:
+                    sv.save(session, os.path.join(FLAGS.save_path, "model.ckpt"))
 
     return np.exp(costs / iters)
 
@@ -328,20 +330,47 @@ def get_config():
         raise ValueError("Invalid model: %s", FLAGS.model)
 
 
-def do_inference(session, model):
+def do_inference(session, model, input, verbose = False):
     fetches = {
         "cost": model.cost,
         "loss": model.loss,
         "final_state":model.final_state
     }
 
-    print("epoch_size: %d" %model.input.epoch_size)
-
-    for step in range(model.input.epoch_size):
-        vals = session.run(fetches, feed_dict=None)
-        loss = vals['loss']
+    state = session.run(model.initial_state)
+    costs = 0.0
+    iter = 0
+    for step in range(input.epoch_size):
+        feed_dict = {}
+        inputs, targets, weights = next(input.iter_data)
+        feed_dict[model.ch_inputs] = inputs
+        feed_dict[model.ch_targets] = targets
+        feed_dict[model.ch_weights] = weights
+        feed_dict[model.initial_state] = state
+        vals = session.run(fetches, feed_dict=feed_dict)
         cost = vals['cost']
-        print("%d : %3f" % (step, np.exp(cost/model.input.num_steps)))
+        costs = costs + cost
+        #state = vals['final_state']
+        iter = iter + input.num_steps
+
+    if verbose:
+        print("perplexity: %.3f" % (np.exp(costs/iter)))
+    return np.exp(costs/iter)
+
+
+def inference_file(session, model, config, path = None, filename="inference.txt", verbose = False):
+    out = []
+    if not path:
+        path = FLAGS.data_path
+
+    ff = os.path.join(path, filename)
+    with codecs.open(ff, "r") as f:
+        for line in f:
+            data = reader.line_to_data(line)
+            input = PTBInput(config = config, data=data)
+            out.append(do_inference(session, model, input, verbose))
+
+    return out
 
 def main(_):
     if not FLAGS.data_path:
@@ -350,13 +379,12 @@ def main(_):
     config = get_config()
     eval_config = get_config()
     eval_config.batch_size = 1
-    eval_config.num_steps = 300
+    eval_config.num_steps = 40
 
     if FLAGS.inference:
         raw_data = reader.inference_raw_data(FLAGS.data_path)
         train_data = valid_data = test_data = raw_data
     else:
-
         raw_data = reader.ch_raw_data(FLAGS.data_path)
         train_data, valid_data, test_data, _ = raw_data
 
@@ -364,54 +392,72 @@ def main(_):
         initializer = tf.random_uniform_initializer(-config.init_scale,
                                                     config.init_scale)
 
-        with tf.name_scope("Train"):
-            train_input = PTBInput(config=config, data=train_data, name="TrainInput")
-            with tf.variable_scope("Model", reuse=None, initializer=initializer):
-                m = PTBModel(is_training=True, config=config, input_=train_input)
-            tf.scalar_summary("Training Loss", m.cost)
-            tf.scalar_summary("Learning Rate", m.lr)
+        if FLAGS.inference:
+            with tf.name_scope("Test"):
+                with tf.variable_scope("Model", reuse=None, initializer=initializer):
+                    mtest = PTBModel(is_training=False, config=eval_config)
+            init_op = tf.initialize_all_variables()
+            saver = tf.train.Saver()
+            with tf.Session() as session:
+                session.run(init_op)
+                ckpt = tf.train.get_checkpoint_state(FLAGS.save_path)
+                if ckpt and ckpt.model_checkpoint_path:
+                    saver.restore(session, ckpt.model_checkpoint_path)
+                    inference_file(session, mtest, eval_config, verbose=True)
+                else:
+                    print("No checkpoint found")
+                    return
 
 
-        with tf.name_scope("Valid"):
-            valid_input = PTBInput(config=config, data=valid_data, name="ValidInput")
-            with tf.variable_scope("Model", reuse=True, initializer=initializer):
-                mvalid = PTBModel(is_training=False, config=config, input_=valid_input)
-            tf.scalar_summary("Validation Loss", mvalid.cost)
+        else:
+            with tf.name_scope("Train"):
+                train_input = PTBInput(config=config, data=train_data, name="TrainInput")
+                with tf.variable_scope("Model", reuse=None, initializer=initializer):
+                    m = PTBModel(is_training=True, config=config)
+                tf.scalar_summary("Training Loss", m.cost)
+                tf.scalar_summary("Learning Rate", m.lr)
 
 
-        with tf.name_scope("Test"):
-            test_input = PTBInput(config=eval_config, data=test_data, name="TestInput")
-            with tf.variable_scope("Model", reuse=True, initializer=initializer):
-                mtest = PTBModel(is_training=False, config=eval_config,
-                                 input_=test_input)
+            with tf.name_scope("Valid"):
+                valid_input = PTBInput(config=config, data=valid_data, name="ValidInput")
+                with tf.variable_scope("Model", reuse=True, initializer=initializer):
+                    mvalid = PTBModel(is_training=False, config=config)
+                tf.scalar_summary("Validation Loss", mvalid.cost)
 
 
-        sv = tf.train.Supervisor(logdir=FLAGS.save_path)
-        print(datetime.datetime.now())
+            with tf.name_scope("Test"):
+                test_input = PTBInput(config=eval_config, data=test_data, name="TestInput")
+                with tf.variable_scope("Model", reuse=True, initializer=initializer):
+                    mtest = PTBModel(is_training=False, config=eval_config)
 
-        with sv.managed_session() as session:
-            if FLAGS.inference:
-                do_inference(session, mtest)
+            init_op = tf.initialize_all_variables()
+            saver = tf.train.Saver()
 
-            else:
+            print(datetime.datetime.now())
+
+            with tf.Session() as session:
+                session.run(init_op)
+                ckpt = tf.train.get_checkpoint_state(FLAGS.save_path)
+                if ckpt and ckpt.model_checkpoint_path:
+                    saver.restore(session, ckpt.model_checkpoint_path)
                 for i in range(config.max_max_epoch):
                     lr_decay = config.lr_decay ** max(i + 1 - config.max_epoch, 0.0)
                     m.assign_lr(session, config.learning_rate * lr_decay)
 
                     print("Epoch: %d Learning rate: %.3f" % (i + 1, session.run(m.lr)))
-                    train_perplexity = run_epoch(session, m, eval_op=m.train_op,
-                                                 verbose=True)
+                    train_perplexity = run_epoch(session, m, train_input, eval_op=m.train_op,
+                                                 verbose=True, sv=saver)
                     print("Epoch: %d Train Perplexity: %.3f" % (i + 1, train_perplexity))
-                    valid_perplexity = run_epoch(session, mvalid, verbose=True)
+                    valid_perplexity = run_epoch(session, mvalid, valid_input, verbose=True)
                     print("Epoch: %d Valid Perplexity: %.3f" % (i + 1, valid_perplexity))
 
-                test_perplexity = run_epoch(session, mtest)
+                test_perplexity = run_epoch(session, mtest, test_input)
                 print("Test Perplexity: %.3f" % test_perplexity)
                 print(datetime.datetime.now())
 
                 if FLAGS.save_path:
                     print("Saving model to %s." % FLAGS.save_path)
-                    sv.saver.save(session, FLAGS.save_path, global_step=sv.global_step)
+                    saver.save(session, os.path.join(FLAGS.save_path, "model.ckpt"))
 
 
 if __name__ == "__main__":
