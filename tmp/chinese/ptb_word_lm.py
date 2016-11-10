@@ -91,8 +91,7 @@ class PTBInput(object):
     def __init__(self, config, data, name=None):
         self.batch_size = batch_size = config.batch_size
         self.num_steps = num_steps = config.num_steps
-        self.epoch_size = ((len(data) // batch_size) - 1) // num_steps
-        self.input_data, self.targets, self.weights = reader.ch_producer(
+        self.input_data, self.targets, self.weights, self.epoch_size = reader.ch_producer(
             data, batch_size, num_steps, name=name)
 
 
@@ -152,17 +151,22 @@ class PTBModel(object):
             "softmax_w", [size, vocab_size], dtype=data_type())
         softmax_b = tf.get_variable("softmax_b", [vocab_size], dtype=data_type())
         logits = tf.matmul(output, softmax_w) + softmax_b
+        weights = tf.reshape(input_.weights, [-1])
+        targets = tf.reshape(input_.targets, [-1])
         loss = tf.nn.seq2seq.sequence_loss_by_example(
             [logits],
-            [tf.reshape(input_.targets, [-1])],
-            [tf.reshape(input_.weights, [-1])])
-        self._cost = cost = tf.reduce_sum(loss) / batch_size
+            [targets],
+            [weights])
+        self._loss = loss
+        self._cost = cost = tf.reduce_sum(loss) / tf.reduce_sum(weights) * num_steps
         self._final_state = state
+
+        self._lr = tf.Variable(0.0, trainable=False)
 
         if not is_training:
             return
 
-        self._lr = tf.Variable(0.0, trainable=False)
+
         tvars = tf.trainable_variables()
         grads, _ = tf.clip_by_global_norm(tf.gradients(cost, tvars),
                                           config.max_grad_norm)
@@ -181,6 +185,10 @@ class PTBModel(object):
     @property
     def input(self):
         return self._input
+
+    @input.setter
+    def input(self, ii):
+        self._input = ii
 
     @property
     def initial_state(self):
@@ -202,6 +210,9 @@ class PTBModel(object):
     def train_op(self):
         return self._train_op
 
+    @property
+    def loss(self):
+        return self._loss
 
 class SmallConfig(object):
     """Small config."""
@@ -212,7 +223,7 @@ class SmallConfig(object):
     num_steps = 20
     hidden_size = 200
     max_epoch = 4
-    max_max_epoch = 13
+    max_max_epoch = 4
     keep_prob = 1.0
     lr_decay = 0.5
     batch_size = 20
@@ -317,17 +328,37 @@ def get_config():
         raise ValueError("Invalid model: %s", FLAGS.model)
 
 
+def do_inference(session, model):
+    fetches = {
+        "cost": model.cost,
+        "loss": model.loss,
+        "final_state":model.final_state
+    }
+
+    print("epoch_size: %d" %model.input.epoch_size)
+
+    for step in range(model.input.epoch_size):
+        vals = session.run(fetches, feed_dict=None)
+        loss = vals['loss']
+        cost = vals['cost']
+        print("%d : %3f" % (step, np.exp(cost/model.input.num_steps)))
+
 def main(_):
     if not FLAGS.data_path:
         raise ValueError("Must set --data_path to PTB data directory")
 
-    raw_data = reader.ptb_raw_data(FLAGS.data_path)
-    train_data, valid_data, test_data, _ = raw_data
-
     config = get_config()
     eval_config = get_config()
     eval_config.batch_size = 1
-    eval_config.num_steps = 1
+    eval_config.num_steps = 300
+
+    if FLAGS.inference:
+        raw_data = reader.inference_raw_data(FLAGS.data_path)
+        train_data = valid_data = test_data = raw_data
+    else:
+
+        raw_data = reader.ch_raw_data(FLAGS.data_path)
+        train_data, valid_data, test_data, _ = raw_data
 
     with tf.Graph().as_default():
         initializer = tf.random_uniform_initializer(-config.init_scale,
@@ -340,11 +371,13 @@ def main(_):
             tf.scalar_summary("Training Loss", m.cost)
             tf.scalar_summary("Learning Rate", m.lr)
 
+
         with tf.name_scope("Valid"):
             valid_input = PTBInput(config=config, data=valid_data, name="ValidInput")
             with tf.variable_scope("Model", reuse=True, initializer=initializer):
                 mvalid = PTBModel(is_training=False, config=config, input_=valid_input)
             tf.scalar_summary("Validation Loss", mvalid.cost)
+
 
         with tf.name_scope("Test"):
             test_input = PTBInput(config=eval_config, data=test_data, name="TestInput")
@@ -352,27 +385,33 @@ def main(_):
                 mtest = PTBModel(is_training=False, config=eval_config,
                                  input_=test_input)
 
+
         sv = tf.train.Supervisor(logdir=FLAGS.save_path)
         print(datetime.datetime.now())
+
         with sv.managed_session() as session:
-            for i in range(config.max_max_epoch):
-                lr_decay = config.lr_decay ** max(i + 1 - config.max_epoch, 0.0)
-                m.assign_lr(session, config.learning_rate * lr_decay)
+            if FLAGS.inference:
+                do_inference(session, mtest)
 
-                print("Epoch: %d Learning rate: %.3f" % (i + 1, session.run(m.lr)))
-                train_perplexity = run_epoch(session, m, eval_op=m.train_op,
-                                             verbose=True)
-                print("Epoch: %d Train Perplexity: %.3f" % (i + 1, train_perplexity))
-                valid_perplexity = run_epoch(session, mvalid, verbose=True)
-                print("Epoch: %d Valid Perplexity: %.3f" % (i + 1, valid_perplexity))
+            else:
+                for i in range(config.max_max_epoch):
+                    lr_decay = config.lr_decay ** max(i + 1 - config.max_epoch, 0.0)
+                    m.assign_lr(session, config.learning_rate * lr_decay)
 
-            test_perplexity = run_epoch(session, mtest)
-            print("Test Perplexity: %.3f" % test_perplexity)
-            print(datetime.datetime.now())
+                    print("Epoch: %d Learning rate: %.3f" % (i + 1, session.run(m.lr)))
+                    train_perplexity = run_epoch(session, m, eval_op=m.train_op,
+                                                 verbose=True)
+                    print("Epoch: %d Train Perplexity: %.3f" % (i + 1, train_perplexity))
+                    valid_perplexity = run_epoch(session, mvalid, verbose=True)
+                    print("Epoch: %d Valid Perplexity: %.3f" % (i + 1, valid_perplexity))
 
-            if FLAGS.save_path:
-                print("Saving model to %s." % FLAGS.save_path)
-                sv.saver.save(session, FLAGS.save_path, global_step=sv.global_step)
+                test_perplexity = run_epoch(session, mtest)
+                print("Test Perplexity: %.3f" % test_perplexity)
+                print(datetime.datetime.now())
+
+                if FLAGS.save_path:
+                    print("Saving model to %s." % FLAGS.save_path)
+                    sv.saver.save(session, FLAGS.save_path, global_step=sv.global_step)
 
 
 if __name__ == "__main__":

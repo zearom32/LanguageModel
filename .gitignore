@@ -93,3 +93,4 @@ simple-examples/
 models_bak/
 rnn/
 data/
+*.txt

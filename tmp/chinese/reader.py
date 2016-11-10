@@ -23,6 +23,7 @@ import collections
 import os
 import codecs
 import itertools
+import random
 
 import tensorflow as tf
 from ch import ch_word_to_id, ch_id_to_word,ch_list
@@ -42,7 +43,12 @@ def _file_to_word_ids(filename, word_to_id):
     return [get_id(word, word_to_id) for word in data]
 
 
-def ptb_raw_data(data_path=None):
+def inference_raw_data(data_path=None):
+    raw_data_path = os.path.join(data_path, "inference.txt")
+    raw_data = _file_to_word_ids(raw_data_path, ch_word_to_id)
+    return raw_data
+
+def ch_raw_data(data_path=None):
     train_path = os.path.join(data_path, "ch.train.txt")
     valid_path = os.path.join(data_path, "ch.valid.txt")
     test_path = os.path.join(data_path, "ch.test.txt")
@@ -53,46 +59,6 @@ def ptb_raw_data(data_path=None):
     test_data = _file_to_word_ids(test_path, word_to_id)
     vocabulary = len(word_to_id)
     return train_data, valid_data, test_data, vocabulary
-
-def ptb_producer(raw_data, batch_size, num_steps, name=None):
-    """Iterate on the raw PTB data.
-
-    This chunks up raw_data into batches of examples and returns Tensors that
-    are drawn from these batches.
-
-    Args:
-      raw_data: one of the raw data outputs from ptb_raw_data.
-      batch_size: int, the batch size.
-      num_steps: int, the number of unrolls.
-      name: the name of this operation (optional).
-
-    Returns:
-      A pair of Tensors, each shaped [batch_size, num_steps]. The second element
-      of the tuple is the same data time-shifted to the right by one.
-
-    Raises:
-      tf.errors.InvalidArgumentError: if batch_size or num_steps are too high.
-    """
-    with tf.name_scope(name, "PTBProducer", [raw_data, batch_size, num_steps]):
-        raw_data = tf.convert_to_tensor(raw_data, name="raw_data", dtype=tf.int32)
-
-        data_len = tf.size(raw_data)
-        batch_len = data_len // batch_size
-        data = tf.reshape(raw_data[0: batch_size * batch_len],
-                          [batch_size, batch_len])
-
-        epoch_size = (batch_len - 1) // num_steps
-        assertion = tf.assert_positive(
-            epoch_size,
-            message="epoch_size == 0, decrease batch_size or num_steps")
-        with tf.control_dependencies([assertion]):
-            epoch_size = tf.identity(epoch_size, name="epoch_size")
-
-        i = tf.train.range_input_producer(epoch_size, shuffle=False).dequeue()
-        x = tf.slice(data, [0, i * num_steps], [batch_size, num_steps])
-        y = tf.slice(data, [0, i * num_steps + 1], [batch_size, num_steps])
-        return x, y
-
 
 def shift(sos, eos, tokens):
     return [sos] + tokens[:-1]
@@ -167,4 +133,14 @@ def ch_producer(raw_data, batch_size, num_steps, name=None):
         x = tf.slice(X, [0, i * num_steps], [batch_size, num_steps])
         y = tf.slice(Y, [0, i * num_steps], [batch_size, num_steps])
         w = tf.slice(W, [0, i * num_steps], [batch_size, num_steps])
-        return x, y, w
+        return x, y, w, epoch_size
+
+
+def generate_random(filename, line):
+    with codecs.open(filename, "w") as f:
+        for i in range(line):
+            k = random.randint(8,15)
+            for j in range(k):
+                f.write(" ")
+                f.write(random.choice(ch_word_to_id.keys()).encode('utf-8'))
+            f.write(" \n")
