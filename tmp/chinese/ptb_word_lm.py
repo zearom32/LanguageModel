@@ -369,8 +369,25 @@ def inference_file(session, model, config, path = None, filename="inference.txt"
             data = reader.line_to_data(line)
             input = PTBInput(config = config, data=data)
             out.append(do_inference(session, model, input, verbose))
-
     return out
+
+
+
+##
+## input x [["abc","def"],[""],[]] should be decoded to 'utf-8'
+## output y = perplexities
+##
+
+def inference(session, model, config, x):
+    out = []
+    for tmp in x:
+        line = "".join(tmp).replace(' ',"") + "\n"
+        word_ids = reader._data_to_word_id(line, reader.ch_word_to_id)
+        input  = PTBInput(config = config, data = word_ids)
+        out.append(do_inference(session, model, input, True))
+    out = np.array(out)
+    return np.array(out)
+
 
 def main(_):
     if not FLAGS.data_path:
