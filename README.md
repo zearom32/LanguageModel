@@ -9,7 +9,7 @@ usage:
 * Train:
 ```
     ## Training
-    ## Every line is a sentense
+    ## Every line is a sentence
     ## data should be model/ch.train.txt, model/ch.valid.txt, model/ch.test.txt
     python ptb_word_lm.py --data_path="data" --save_path="model"
 ```
@@ -20,10 +20,10 @@ usage:
 
     ## input: X,X [['I','am','fine'], ['I','am OK']]
     ##          Chinese must be decoded as utf-8
-    ## output: y, a numpy array, perplexity of each sentense
+    ## output: y, a numpy array, perplexity of each sentence
 
     model.test(x)
 
-    # you can also test sentenses in file
+    # you can also test sentences in file
     model.test_file("test.txt")
 ```
