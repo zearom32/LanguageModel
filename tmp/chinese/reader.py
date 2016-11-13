@@ -29,20 +29,22 @@ import numpy as np
 import tensorflow as tf
 from ch import ch_word_to_id, ch_id_to_word,ch_list
 
-def _read_words(filename):
-    with codecs.open(filename, "r") as f:
-        return f.read().decode("utf-8").replace("\n", " <eos> ").split()
 
-def get_id(word, word_to_id):
-    if word in word_to_id:
+def _get_id(word, word_to_id):
+    if word == "\n":
+        return word_to_id['<eos>']
+    elif word in word_to_id:
         return word_to_id[word]
     else:
         return word_to_id['<unk>']
 
-def _file_to_word_ids(filename, word_to_id):
-    data = _read_words(filename)
-    return [get_id(word, word_to_id) for word in data]
+def _data_to_word_id(data, word_to_id):
+    return [_get_id(word, word_to_id) for word in data]
 
+def _file_to_word_ids(filename, word_to_id):
+    with codecs.open(filename, "r") as f:
+        data = list(f.read().decode("utf-8").replace(" ",""))
+        return _data_to_word_id(data, word_to_id)
 
 def inference_raw_data(data_path=None, filename="inference.txt"):
     raw_data_path = os.path.join(data_path, filename)
@@ -50,8 +52,8 @@ def inference_raw_data(data_path=None, filename="inference.txt"):
     return raw_data
 
 def line_to_data(line):
-    tmp = line.decode("utf-8").replace("\n", " <eos> ").split()
-    return [get_id(word, ch_word_to_id) for word in tmp]
+    tmp = list(line.decode('utf-8').replace(' ',""))
+    return _data_to_word_id(tmp, ch_word_to_id)
 
 def ch_raw_data(data_path=None):
     train_path = os.path.join(data_path, "ch.train.txt")
