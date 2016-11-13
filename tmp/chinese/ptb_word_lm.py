@@ -226,54 +226,20 @@ class SmallConfig(object):
     batch_size = 20
     vocab_size = 6800
 
-
-class MediumConfig(object):
-    """Medium config."""
-    init_scale = 0.05
+class TestConfig(object):
+    """Small config."""
+    init_scale = 0.1
     learning_rate = 1.0
     max_grad_norm = 5
     num_layers = 2
-    num_steps = 35
-    hidden_size = 650
-    max_epoch = 6
-    max_max_epoch = 39
-    keep_prob = 0.5
-    lr_decay = 0.8
-    batch_size = 20
-    vocab_size = 6800
-
-
-class LargeConfig(object):
-    """Large config."""
-    init_scale = 0.04
-    learning_rate = 1.0
-    max_grad_norm = 10
-    num_layers = 2
-    num_steps = 35
-    hidden_size = 1500
-    max_epoch = 14
-    max_max_epoch = 55
-    keep_prob = 0.35
-    lr_decay = 1 / 1.15
-    batch_size = 20
-    vocab_size = 6800
-
-
-class TestConfig(object):
-    """Tiny config, for testing."""
-    init_scale = 0.1
-    learning_rate = 1.0
-    max_grad_norm = 1
-    num_layers = 1
-    num_steps = 2
-    hidden_size = 2
-    max_epoch = 1
-    max_max_epoch = 1
+    num_steps = 100
+    hidden_size = 200
+    max_epoch = 4
+    max_max_epoch = 4
     keep_prob = 1.0
     lr_decay = 0.5
-    batch_size = 20
+    batch_size = 1
     vocab_size = 6800
-
 
 def run_epoch(session, model, input, eval_op=None, verbose=False, sv = None):
     """Runs the model on the given data."""
@@ -320,10 +286,6 @@ def run_epoch(session, model, input, eval_op=None, verbose=False, sv = None):
 def get_config():
     if FLAGS.model == "small":
         return SmallConfig()
-    elif FLAGS.model == "medium":
-        return MediumConfig()
-    elif FLAGS.model == "large":
-        return LargeConfig()
     elif FLAGS.model == "test":
         return TestConfig()
     else:
@@ -358,10 +320,8 @@ def do_inference(session, model, input, verbose = False):
     return np.exp(costs/iter)
 
 
-def inference_file(session, model, config, path = None, filename="inference.txt", verbose = False):
+def inference_file(session, model, config, path = "", filename="inference.txt", verbose = False):
     out = []
-    if not path:
-        path = FLAGS.data_path
 
     ff = os.path.join(path, filename)
     with codecs.open(ff, "r") as f:
@@ -369,7 +329,7 @@ def inference_file(session, model, config, path = None, filename="inference.txt"
             data = reader.line_to_data(line)
             input = PTBInput(config = config, data=data)
             out.append(do_inference(session, model, input, verbose))
-    return out
+    return np.array(out)
 
 
 
@@ -384,7 +344,7 @@ def inference(session, model, config, x):
         line = "".join(tmp).replace(' ',"") + "\n"
         word_ids = reader._data_to_word_id(line, reader.ch_word_to_id)
         input  = PTBInput(config = config, data = word_ids)
-        out.append(do_inference(session, model, input, True))
+        out.append(do_inference(session, model, input, False))
     out = np.array(out)
     return np.array(out)
 
@@ -420,7 +380,7 @@ def main(_):
                 ckpt = tf.train.get_checkpoint_state(FLAGS.save_path)
                 if ckpt and ckpt.model_checkpoint_path:
                     saver.restore(session, ckpt.model_checkpoint_path)
-                    inference_file(session, mtest, eval_config, verbose=True)
+                    inference_file(session, mtest, eval_config, path = FLAGS.data_path, verbose=True)
                 else:
                     print("No checkpoint found")
                     return
