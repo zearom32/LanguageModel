@@ -10,6 +10,7 @@ usage:
 ```
     ## Training
     ## Every line is a sentense
+    ## data should be model/ch.train.txt, model/ch.valid.txt, model/ch.test.txt
     python ptb_word_lm.py --data_path="data" --save_path="model"
 ```
 * Test in code:
